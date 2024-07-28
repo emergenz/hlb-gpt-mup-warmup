@@ -19,6 +19,7 @@ import zipfile
 import math
 import os
 
+import wandb
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -170,6 +171,20 @@ with torch.no_grad():
 # Used in the dataloader to select indexes in a sequence. Preallocated for slight efficiency.
 batch_index_offsets = torch.arange(0, hyp['misc']['sequence_length']['max']+1, dtype=torch.long, device=hyp['misc']['device'])
 
+
+#############################################
+#            wandb Initialization           #
+#############################################
+
+wandb_project_name = 'mup_transformer_warmup'
+wandb_team_name = "aidos-labs"
+wandb.init(
+    entity=wandb_team_name,
+    project=wandb_project_name,
+    config=hyp
+)
+# TODO: change the run name as soon as we remove model-scale based learning rate adjustment as well as the parameter-group dependent learning rate scaling
+wandb.run.name = f"run_{model_scale}_{max_sequence_length}"
 
 #############################################
 #            Network Components             #
@@ -506,6 +521,14 @@ def main():
             train_summary_vars = {'epoch': tokens_seen//len(data['train']), 'curr_step': curr_step, 'train_loss': train_loss, 'train_acc': train_acc, 'grad_norm': grad_norm}
 
             print_training_details(format_for_table(variables_to_log, locals=train_summary_vars))
+            wandb.log({
+                "Train Loss": train_loss,
+                "Train PPL": math.exp(train_loss),
+                "Epoch": epoch,
+                "Step": curr_step,
+                "Batch Size": curr_batchsize,
+                "LR": opt.param_groups[0]['lr']
+            })
 
 
         # Once we've accumulated steps over all of our microbatches, take a single full-batchsize step.
@@ -567,6 +590,12 @@ def main():
                 ## We also check to see if we're on our final eval loop (assum that max_curr_step lines up with the eval_every value) so we can print the 'bottom' of the table for each round.
                 is_final_eval = (curr_step >= hyp['opt']['total_train_steps']) # If we're at the end of training, add a line after the end of the run
                 print_training_details(format_for_table(variables_to_log, locals=locals()), is_final_entry=is_final_eval)
+                wandb.log({
+                    "Validation Loss": val_loss,
+                    "Validation PPL": math.exp(val_loss),
+                    "End of Epoch": epoch,
+                    "Step": curr_step
+                })
 
                 torch.cuda.synchronize()
                 starter.record()
